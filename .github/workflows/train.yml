@@ -52,7 +52,7 @@ jobs:
           python main.py push --run "$RUN_DIR" --repo "$HF_REPO" \
             --repo-type dataset --follow --interval 180 &
           PUSH_PID=$!
-          timeout 5h30m python main.py train --preset quadruped --run "$RUN_DIR" \
+          timeout 5.5h python main.py train --preset quadruped --run "$RUN_DIR" \
             --population 200 --generations 5000 --checkpoint-every 20 \
             --workers 0 --resume || true
           kill "$PUSH_PID" 2>/dev/null || true
