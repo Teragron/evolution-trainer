@@ -112,7 +112,7 @@ class HfRemote:
              message: Optional[str] = None) -> int:
         api = _api(self.token)
         api.create_repo(self.repo_id, repo_type=self.repo_type, exist_ok=True,
-                        private=True)
+                        private=False)
         patterns = None if full else ["*.json", "*.csv", "best.npz"]
         ignore = None if full else ["gen/*", "*/gen/*", "*.log", "*.tmp.npz"]
         n = _count(local_dir, full)

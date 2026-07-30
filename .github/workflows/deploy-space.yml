@@ -1,0 +1,38 @@
+name: deploy-space
+
+# Syncs space/ to the "Evo Viewer" Hugging Face Space (teragron/evo-viewer)
+# any time it changes, so the dashboard stays current with zero manual steps.
+
+on:
+  push:
+    branches: [master]
+    paths: ["space/**"]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install huggingface_hub
+
+      - name: sync space/ to the HF Space repo
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python - <<'PY'
+          import os
+          from huggingface_hub import HfApi
+
+          api = HfApi(token=os.environ["HF_TOKEN"])
+          api.create_repo("teragron/evo-viewer", repo_type="space",
+                          space_sdk="gradio", exist_ok=True, private=False)
+          api.upload_folder(folder_path="space", repo_id="teragron/evo-viewer",
+                            repo_type="space",
+                            commit_message=f"deploy: {os.environ['GITHUB_SHA'][:7]}")
+          PY
