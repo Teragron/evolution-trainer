@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>evolution training - live status</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem;
+    background: #12141a; color: #dde;
+    font: 14px/1.5 ui-monospace, "Consolas", "SF Mono", monospace;
+  }
+  h1 { font-size: 1.1rem; color: #ffc454; margin: 0 0 .25rem; }
+  .sub { color: #8890a0; margin-bottom: 1.5rem; }
+  .sub a { color: #6cb2ff; }
+  .stats {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px; margin-bottom: 1.5rem;
+  }
+  .card {
+    background: #171a22; border: 1px solid #262b38; border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .card .label { color: #8890a0; font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; }
+  .card .value { font-size: 1.3rem; color: #eef; margin-top: 4px; }
+  .card .value.stale { color: #ffa35c; }
+  .chart-wrap {
+    background: #171a22; border: 1px solid #262b38; border-radius: 8px;
+    padding: 16px; height: 360px;
+  }
+  .empty { color: #8890a0; padding: 2rem 0; text-align: center; }
+</style>
+</head>
+<body>
+  <h1>evolution training - live status</h1>
+  <div class="sub">
+    watching <code>teragron/evo-run</code> &middot;
+    <a href="https://github.com/Teragron/evolution-trainer">source</a>
+  </div>
+
+  <div class="stats">
+    <div class="card"><div class="label">generation</div><div class="value" id="v-gen">-</div></div>
+    <div class="card"><div class="label">best fitness ever</div><div class="value" id="v-best">-</div></div>
+    <div class="card"><div class="label">speed</div><div class="value" id="v-speed">-</div></div>
+    <div class="card"><div class="label">last updated</div><div class="value" id="v-age">-</div></div>
+  </div>
+
+  <div class="chart-wrap">
+    <canvas id="chart"></canvas>
+    <div class="empty" id="empty" style="display:none">no data yet -- waiting for the first checkpoint push</div>
+  </div>
+
+<script>
+const REPO_ID = "teragron/evo-run";
+const RAW_BASE = `https://huggingface.co/datasets/${REPO_ID}/resolve/main/run/`;
+const API_URL = `https://huggingface.co/api/datasets/${REPO_ID}`;
+const REFRESH_MS = 45000;
+const GENS_WINDOW = 20;
+
+let lastGood = null;   // { rows, population, lastModified }
+let chart = null;
+
+function parseCsv(text) {
+  const lines = text.trim().split("\n");
+  const header = lines[0].split(",");
+  return lines.slice(1).map(line => {
+    const cells = line.split(",");
+    const row = {};
+    header.forEach((h, i) => { row[h] = Number(cells[i]); });
+    return row;
+  });
+}
+
+function fmtAge(iso) {
+  if (!iso) return "unknown";
+  const seconds = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (seconds < 90) return `${seconds.toFixed(0)}s ago`;
+  if (seconds < 5400) return `${(seconds / 60).toFixed(0)}m ago`;
+  return `${(seconds / 3600).toFixed(1)}h ago`;
+}
+
+function setText(id, text, stale) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.classList.toggle("stale", !!stale);
+}
+
+function renderChart(rows) {
+  const gens = rows.map(r => r.generation);
+  const best = rows.map(r => r.best);
+  const mean = rows.map(r => r.mean);
+  const ctx = document.getElementById("chart").getContext("2d");
+  const data = {
+    labels: gens,
+    datasets: [
+      { label: "mean", data: mean, borderColor: "#6a7590", borderWidth: 1.5,
+        pointRadius: 0, tension: 0.15 },
+      { label: "best", data: best, borderColor: "#ffc454", borderWidth: 2.5,
+        pointRadius: 0, tension: 0.15 },
+    ],
+  };
+  const opts = {
+    responsive: true, maintainAspectRatio: false,
+    animation: false,
+    interaction: { mode: "index", intersect: false },
+    scales: {
+      x: { title: { display: true, text: "generation", color: "#8890a0" },
+           ticks: { color: "#8890a0" }, grid: { color: "#232733" } },
+      y: { title: { display: true, text: "fitness (m)", color: "#8890a0" },
+           ticks: { color: "#8890a0" }, grid: { color: "#232733" } },
+    },
+    plugins: { legend: { labels: { color: "#dde" } } },
+  };
+  if (chart) {
+    chart.data = data;
+    chart.options = opts;
+    chart.update();
+  } else {
+    chart = new Chart(ctx, { type: "line", data, options: opts });
+  }
+}
+
+async function fetchState() {
+  const [csvText, config, apiInfo] = await Promise.all([
+    fetch(RAW_BASE + "history.csv").then(r => { if (!r.ok) throw new Error("history.csv " + r.status); return r.text(); }),
+    fetch(RAW_BASE + "config.json").then(r => { if (!r.ok) throw new Error("config.json " + r.status); return r.json(); }),
+    fetch(API_URL).then(r => r.ok ? r.json() : null).catch(() => null),
+  ]);
+  return {
+    rows: parseCsv(csvText),
+    population: config?.ga?.population ?? "?",
+    lastModified: apiInfo?.lastModified ?? null,
+  };
+}
+
+async function refresh() {
+  let state, stale = false;
+  try {
+    state = await fetchState();
+    lastGood = state;
+  } catch (e) {
+    if (!lastGood) {
+      document.getElementById("empty").style.display = "block";
+      setText("v-gen", "no data yet");
+      setText("v-best", "no data yet");
+      setText("v-speed", "no data yet");
+      setText("v-age", "no data yet");
+      return;
+    }
+    state = lastGood;
+    stale = true;
+  }
+
+  const { rows, population, lastModified } = state;
+  if (!rows.length) return;
+  document.getElementById("empty").style.display = "none";
+
+  const last = rows[rows.length - 1];
+  const bestEver = Math.max(...rows.map(r => r.best));
+  const window = rows.slice(-GENS_WINDOW);
+  const meanSecs = window.reduce((a, r) => a + r.seconds, 0) / window.length;
+  const gensPerHour = meanSecs > 0 ? 3600 / meanSecs : NaN;
+
+  setText("v-gen", `${last.generation}${stale ? " (stale)" : ""}`, stale);
+  setText("v-best", `${bestEver.toFixed(2)} m  (pop ${population})`, stale);
+  setText("v-speed", `${last.evals_per_sec.toFixed(0)} evals/s, ~${gensPerHour.toFixed(0)} gen/hr`, stale);
+  setText("v-age", `${fmtAge(lastModified)}${stale ? " (fetch failing)" : ""}`, stale);
+
+  renderChart(rows);
+}
+
+refresh();
+setInterval(refresh, REFRESH_MS);
+</script>
+</body>
+</html>

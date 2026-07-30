@@ -31,7 +31,7 @@ jobs:
 
           api = HfApi(token=os.environ["HF_TOKEN"])
           api.create_repo("teragron/evo-viewer", repo_type="space",
-                          space_sdk="gradio", exist_ok=True, private=False)
+                          space_sdk="static", exist_ok=True, private=False)
           api.upload_folder(folder_path="space", repo_id="teragron/evo-viewer",
                             repo_type="space",
                             commit_message=f"deploy: {os.environ['GITHUB_SHA'][:7]}")
