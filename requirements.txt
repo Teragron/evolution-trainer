@@ -1,0 +1,6 @@
+# Core: everything needed to TRAIN (headless, no display, no SDL).
+# Versions are pinned because pymunk's solver is what defines your fitness
+# landscape -- a different pymunk on the remote box means a slightly different
+# gait when you replay it locally.
+numpy==2.2.6
+pymunk==7.3.0

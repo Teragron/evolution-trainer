@@ -1,0 +1,3 @@
+# Local-only extras: the editor and the viewer. Never needed on a training box.
+-r requirements.txt
+pygame==2.6.1

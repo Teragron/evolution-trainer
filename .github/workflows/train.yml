@@ -1,0 +1,60 @@
+name: train
+
+# Public repos get unlimited free Actions minutes, but a single job is hard
+# capped at 6h. So each run trains for a bounded slice, checkpoints and
+# pushes its progress to a Hugging Face repo, then exits. The schedule
+# trigger fires every 20 minutes; `concurrency` makes new triggers queue
+# behind a still-running job instead of running in parallel, so in practice
+# the next slice starts right after the previous one ends -- a continuous
+# chain with no self-dispatch and no extra token needed.
+#
+# Stop it any time with:  gh workflow disable train.yml
+# Resume with:            gh workflow enable train.yml
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/20 * * * *"
+
+concurrency:
+  group: training
+  cancel-in-progress: false
+
+env:
+  RUN_DIR: runs/arch
+  HF_REPO: teragron/evo-run
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt huggingface_hub
+
+      - name: resume from the latest checkpoint on Hugging Face
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          mkdir -p "$RUN_DIR"
+          python main.py sync --from "hf://$HF_REPO" --repo-type dataset \
+            --run "$RUN_DIR" --once --full || echo "nothing to resume from yet"
+
+      - name: train (bounded so there's time left to push before the job's hard cutoff)
+        run: |
+          timeout 5h30m python main.py train --preset quadruped --run "$RUN_DIR" \
+            --population 200 --generations 5000 --checkpoint-every 20 \
+            --workers 0 --resume || true
+
+      - name: push progress back to Hugging Face
+        if: always()
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python main.py push --run "$RUN_DIR" --repo "$HF_REPO" \
+            --repo-type dataset --full
